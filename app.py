@@ -6,6 +6,8 @@ from langchain.retrievers.multi_query import MultiQueryRetriever
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_ollama import OllamaLLM
 from langchain.chains.combine_documents import create_stuff_documents_chain
+from langchain.chains import ConversationalRetrievalChain
+from langchain.memory import ConversationBufferMemory
 from langchain.chains.retrieval import create_retrieval_chain
 from flask_sqlalchemy import SQLAlchemy
 from langchain.docstore.document import Document
@@ -50,6 +52,8 @@ chat_prompt = ChatPromptTemplate.from_messages(
         ("human", "{input}"),
     ]
 )
+
+global_memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
 
 db_folder = 'uploads'
 if os.path.exists(db_folder):
@@ -176,9 +180,17 @@ def query_llm():
         vector_store = Chroma(persist_directory='vector_db', embedding_function=model)
         retriever = create_complete_retriever(vector_store, llm)
         retriever_from_llm = MultiQueryRetriever.from_llm(retriever=retriever, llm=llm)
-        document_chain = create_stuff_documents_chain(llm, chat_prompt)  
-        chain = create_retrieval_chain(retriever_from_llm, document_chain) 
-        result = chain.invoke({"input": query})
+        #document_chain = create_stuff_documents_chain(llm, chat_prompt)
+        chain = ConversationalRetrievalChain.from_llm(
+            llm=llm,
+            retriever=retriever_from_llm,
+            memory=global_memory,
+            chain_type="stuff"  # using 'stuff' to simply concatenate context; adjust as needed
+        )
+        
+        result = chain({"question": query})
+        # chain = create_retrieval_chain(retriever_from_llm, chain) 
+        # result = chain.invoke({"input": query})
         response_answer = result["answer"]
         ai_answer_datetime = datetime.datetime.utcnow()
         call_id = datetime.datetime.utcnow().strftime("%Y%m%d%H%M%S") + str(random.randint(100, 999))
@@ -191,8 +203,6 @@ def query_llm():
             user_query_datetime=user_query_datetime,
             ai_answer_datetime=ai_answer_datetime
         )
-
-
         
         try:
             db.session.add(new_record)
@@ -236,7 +246,7 @@ def selected_text_summary():
     
 
     return jsonify({
-        'summary': result
+        'summary': result   
     })
 
 @app.route('/api/classifier', methods = ['POST'])
